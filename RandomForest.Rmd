@@ -1,0 +1,281 @@
+---
+title: "RandomForest"
+author: "Adrián González"
+date: "2024-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Asegúrate de que df tenga la columna 'player_id' para hacer el join
+df2 <- df2 %>% 
+  mutate(player_id = as.character(player_id))  # Convierte a character si no lo es
+
+positions_to_add <- positions_to_add %>% 
+  mutate(player_id = as.character(player_id))  # Asegúrate de que 'player_id' sea character
+
+# Unir los dataframes
+df2 <- df2 %>%
+  left_join(positions_to_add, by = "player_id", suffix = c("", "_new"))
+
+# Actualizar la columna 'position' con las nuevas posiciones donde correspondan
+df2 <- df2 %>%
+  mutate(position = ifelse(is.na(position_new), position, position_new)) %>%
+  select(-position_new)  # Elimina la columna temporal 'position_new'
+```
+
+
+```{r}
+
+# Cargar las librerías necesarias
+library(tidyverse)
+library(corrplot)
+library(ggcorrplot)
+library(caret)
+library(gbm)
+library(e1071)
+library(randomForest)
+
+
+# Paso 1: Eliminar todas las filas con valores NA
+df_filtered <- df2 %>%
+  filter(!is.na(skill))
+
+# Paso 2: Eliminar las columnas que contienen IDs únicos
+exclude_cols <- c("match_id", "filename", "video_file_number", "point_id", "time","video_time","code",
+                  "special_code","date","Match", "start_coordinate", "mid_coordinate", "end_coordinate",
+                  "start_coordinate_x", "mid_coordinate_x", "end_coordinate_x",
+                  "start_coordinate_y", "mid_coordinate_y", "end_coordinate_y", "file_line_number",
+                  "attack_code","attack_description","set_code","set_description","set_type",
+                  "start_zone","end_zone","end_cone", "end_subzone","custom_code","set_player",
+                  "rally_id","possesion_id","timeout","substitution","point","end_of_set",
+                  "player_number","player_name","player_id","Player","setter_id","visiting_setter_id",
+                  "home_setter_id","visiting_player_id6","visiting_player_id5","visiting_player_id4",
+                  "visiting_player_id4","visiting_player_id3","visiting_player_id2","visiting_player_id1",
+                  "home_player_id6","home_player_id5","home_player_id4","home_player_id3","home_player_id2",
+                  "home_player_id1","point_phase", "team_touch_id", "evaluation_code", "evaluation", "home_team_score",
+                  "visiting_team_score","home_p1", "home_p2", "home_p3", "home_p4","home_p5","home_p6",
+                  "visiting_p1","visiting_p2","visiting_p3","visiting_p4","visiting_p5","visiting_p6",
+                  "home_score_start_of_point","visiting_score_start_of_point","attack_quality", "point_won_by", "player_rol",
+                  "attack_phase","dig_quality")
+df_filtered <- df_filtered %>%
+  select(-all_of(exclude_cols))
+
+# Filtrar solo por skill == "attack"
+df_filtered <- df_filtered %>%
+  filter(skill == "attack")
+
+# Paso 3: Convertir columnas numéricas a tipo `numeric`
+# Identificar columnas que contienen solo números
+numeric_cols <- df_filtered %>%
+  select(where(is.character)) %>%
+  summarise(across(everything(), ~ all(grepl("^-?\\d*\\.?\\d+$", .)))) %>%
+  pivot_longer(everything(), names_to = "col", values_to = "is_numeric") %>%
+  filter(is_numeric) %>%
+  pull(col)
+
+# Convertir las columnas identificadas a numéricas
+df_filtered <- df_filtered %>%
+  mutate(across(all_of(numeric_cols), as.numeric))
+
+
+```
+
+
+```{r}
+categorical_cols <- df_filtered %>%
+  select(where(is.character)) %>%
+  names()
+
+df_filtered <- df_filtered %>%
+  mutate(across(all_of(categorical_cols), as.factor))
+```
+
+
+
+```{r}
+numeric_df <- df_filtered %>%
+  select(where(is.numeric))
+
+# Calcular la matriz de correlación
+correlation_matrix <- cor(numeric_df, use = "complete.obs")
+
+# Visualizar la matriz de correlación con un heatmap
+corrplot(correlation_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         addCoef.col = "black", number.cex = 0.7,
+         col = colorRampPalette(c("red", "white", "blue"))(200))
+
+# Alternativa con ggcorrplot
+ggcorrplot(correlation_matrix, 
+           hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method = "circle", 
+           colors = c("red", "white", "blue"), 
+           title = "Correlation Heatmap", 
+           ggtheme = theme_minimal())
+```
+
+
+```{r}
+str(df_filtered)
+```
+
+
+```{r}
+# Eliminar filas con valores faltantes
+df_filtered <- df_filtered %>%
+  drop_na()
+```
+
+```{r}
+modelo_random_forest <- randomForest(winning_attack ~ ., data = df_filtered, importance = TRUE)
+
+print(modelo_random_forest)
+
+importance(modelo_random_forest)
+varImpPlot(modelo_random_forest)
+
+```
+
+```{r}
+# Paso 2: Particionar los datos en conjunto de entrenamiento y prueba
+set.seed(123)
+trainIndex <- createDataPartition(df_filtered$winning_attack, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+trainData <- df_filtered[trainIndex,]
+testData  <- df_filtered[-trainIndex,]
+
+# Paso 3: Eliminar la variable predictora de los conjuntos de entrenamiento y prueba
+trainData_x <- trainData %>% select(-winning_attack)
+testData_x <- testData %>% select(-winning_attack)
+
+trainData_y <- trainData$winning_attack
+testData_y <- testData$winning_attack
+```
+
+
+```{r}
+# Paso 4: Entrenar el modelo Random Forest
+set.seed(123)
+modelo_random_forest2 <- train(trainData_x, trainData_y, method = "rf", 
+                  trControl = trainControl(method = "cv", number = 10))
+
+# Paso 5: Predicción con el modelo de Random Forest
+rf_pred <- predict(modelo_random_forest2, testData_x)
+
+# Paso 6: Evaluación del modelo Random Forest
+rf_cm <- confusionMatrix(rf_pred, testData_y)
+print(rf_cm)
+```
+```{r}
+varImp
+```
+
+
+
+```{r}
+# Paso 1: Determinar la importancia de las variables
+varImp <- varImp(modelo_random_forest2)$importance
+
+# Paso 2: Definir un umbral para determinar las variables menos importantes
+# Seleccionar variables con importancia menor que el 10% de la máxima importancia
+umbral <- 0.1 * max(varImp)
+
+# Identificar las variables menos importantes
+var_menos_imp  <- row.names(varImp)[varImp$Overall < umbral]
+
+# Mostrar las variables menos importantes
+print(var_menos_imp )
+
+# Paso 3: Eliminar las variables menos importantes del conjunto de datos
+trainData_x_red <- trainData_x %>% select(-all_of(var_menos_imp ))
+testData_x_red <- testData_x %>% select(-all_of(var_menos_imp ))
+
+# Paso 4: Volver a entrenar el modelo con el conjunto de datos reducido
+set.seed(123)
+rf_model_red <- train(trainData_x_red, trainData_y, method = "rf", 
+                          trControl = trainControl(method = "cv", number = 10))
+
+# Paso 5: Predicción con el modelo reducido
+rf_pred_red <- predict(rf_model_red, testData_x_red)
+
+# Paso 6: Evaluación del modelo reducido
+rf_cm_red <- confusionMatrix(rf_pred_red, testData_y)
+print(rf_cm_red)
+
+
+```
+
+
+```{r}
+library(ranger)
+
+set.seed(123)
+tuneGrid <- expand.grid(.mtry = c(2, 5, 10),
+                        .splitrule = c("gini", "extratrees"),
+                        .min.node.size = c(1, 5, 10))
+
+control <- trainControl(method = "cv", number = 10, search = "grid")
+
+rf_model_tuned <- train(trainData_x_red, trainData_y, 
+                        method = "ranger", 
+                        trControl = control, 
+                        tuneGrid = tuneGrid)
+```
+
+```{r}
+# Paso 2: Predicción con el modelo ajustado
+rf_pred_tuned <- predict(rf_model_tuned, testData_x_red)
+
+# Paso 3: Evaluación del modelo ajustado
+rf_cm_tuned <- confusionMatrix(rf_pred_tuned, testData_y)
+print(rf_cm_tuned)
+```
+
+
+
+```{r}
+# Ejemplo con Gradient Boosting
+set.seed(123)
+gbm_model <- train(trainData_x_red, trainData_y, method = "gbm", 
+                   trControl = trainControl(method = "cv", number = 10),
+                   verbose = FALSE)
+
+# Predicción con el modelo de Gradient Boosting
+gbm_pred <- predict(gbm_model, testData_x_red)
+
+# Evaluación del modelo de Gradient Boosting
+gbm_cm <- confusionMatrix(gbm_pred, testData_y)
+print(gbm_cm)
+
+
+```
+
+
+```{r}
+library(ROCR)
+
+gbm_pred_prob <- predict(gbm_model, testData_x_red, type = "prob")[,2]
+
+pred <- prediction(gbm_pred_prob, testData_y)
+
+perf <- performance(pred, "tpr", "fpr")
+
+auc <- performance(pred, measure = "auc")
+auc_value <- auc@y.values[[1]]
+
+# Paso 5: Graficar la curva ROC
+plot(perf, colorize = TRUE, main = "Curva ROC - Gradient Boosting")
+abline(a = 0, b = 1, lty = 2, col = "gray")
+legend("bottomright", legend = paste("AUC =", round(auc_value, 3)), col = "black", lwd = 2)
+
+# Mostrar el valor de AUC
+print(paste("AUC: ", round(auc_value, 3)))
+```

@@ -1,0 +1,506 @@
+---
+title: "Predictions"
+author: "Adrián González"
+date: "2024-05-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(randomForest)
+library(rpart)
+```
+
+```{r}
+# Crear el dataframe con las posiciones adicionales
+positions_to_add <- data.frame(
+  player_id = c(1323, 150, 174, 184, 190, 2131, 269, 5523, 5669, 5720,
+                5782, 6708, 6711, 6712, 6972, 7246, 7155, 7441, 7880, 7910,
+                8102, 8574, 8704, 8825, 8834, 8882, 8884, 9019, 9035, 9429,
+                9435, 9532, 9575, 9576, 9580, 975, 1320, 8530, 4468, "joa-val", 
+                9963, 5522, 5708, 9180, 4978, 7859, 7881, 6318, 9522, 9676, 8883, 9436,
+                8118, 932,6734,8403,7843,1866,9437,7250,5760,9433,5761,6710,9430,7336,
+                9675,9277,4753,4968,8622,7371,6307,6704,7440,7248,9579,6339),
+  position = c("mb", "oh", "oh", "mb", "mb", "mb", "mb", "mb", "oh", "mb",
+               "mb", "oh", "mb", "mb", "oh", "mb", "mb", "mb", "oh", "mb",
+               "opp", "ds/l", "mb", "mb", "mb", "ds/l", "opp", "mb", "mb", "mb",
+               "mb", "mb", "mb", "opp", "mb", "mb", "opp", "oh", "oh", "oh", "mb", 
+               "mb", "s", "mb", "ds/l", "oh", "s", "ds/l", "opp", "mb", "oh", "oh",
+               "mb","mb","mb","mb","opp","mb","opp","oh","mb","oh","mb","opp","opp","oh",
+               "oh","oh","oh","oh","mb","opp","mb","mb","opp","oh","mb","oh")
+)
+
+# Asegúrate de que df tenga la columna 'player_id' para hacer el join
+df <- df %>% 
+  mutate(player_id = as.character(player_id))  # Convierte a character si no lo es
+
+positions_to_add <- positions_to_add %>% 
+  mutate(player_id = as.character(player_id))  # Asegúrate de que 'player_id' sea character
+
+# Unir los dataframes
+df <- df %>%
+  left_join(positions_to_add, by = "player_id", suffix = c("", "_new"))
+
+# Actualizar la columna 'position' con las nuevas posiciones donde correspondan
+df <- df %>%
+  mutate(position = ifelse(is.na(position_new), position, position_new)) %>%
+  select(-position_new)  # Elimina la columna temporal 'position_new'
+```
+
+
+
+```{r}
+# Seleccionar variables predictoras y la variable objetivo
+variables_predictivas <- c("team","skill", "skill_type","skill_subtype","num_players", "num_players_numeric",
+                           "home_setter_position", "visiting_setter_position", "attack_phase","set_number",
+                           "home_team","visiting_team","home_team_id","visiting_team_id","team_id","serving_team",
+                           "phase","receiving_team","set_won_by","home_sets_won","visiting_sets_won",
+                           "match_won_by","set_won_by_id","team_won_set","match_won_by_id","team_won_match","setter_position",
+                           "setter_front_back","reception_quality","opponent",
+                           "sets_won","match_won","team_score","opp_score","position")
+variable_objetivo <- "winning_attack"
+
+```
+
+```{r}
+df_modelo <- df[df$skill == "attack", c(variables_predictivas, variable_objetivo), drop = FALSE]
+# Eliminar filas con valores faltantes
+df_modelo <- df_modelo %>%
+  drop_na()
+```
+
+
+
+
+```{r}
+# Verificar la distribución en winning_attack
+table(df_modelo$winning_attack)
+
+# Verificar valores NA en winning_attack
+sum(is.na(df_modelo$winning_attack))
+```
+```{r}
+# Crear el gráfico de barras
+df_modelo$winning_attack <- as.factor(df_modelo$winning_attack)
+
+# Crear el gráfico de barras
+ggplot(df_modelo, aes(x = winning_attack, fill = winning_attack)) +
+  geom_bar() +
+  labs(title = "Distribución de la variable 'winning_attack'",
+       x = "Winning Attack",
+       y = "Nº de ataques") +
+  theme_minimal()+
+  scale_fill_manual(values = c("false" = "tomato", "true" = "seagreen"))
+```
+```{r}
+str(df_modelo)
+```
+
+
+```{r}
+numeric_cols <- df_modelo %>%
+  select(where(is.character)) %>%
+  summarise(across(everything(), ~ all(grepl("^-?\\d*\\.?\\d+$", .)))) %>%
+  pivot_longer(everything(), names_to = "col", values_to = "is_numeric") %>%
+  filter(is_numeric) %>%
+  pull(col)
+
+# Convertir las columnas identificadas a numéricas
+df_modelo <- df_modelo %>%
+  mutate(across(all_of(numeric_cols), as.numeric))
+
+categorical_cols <- df_modelo %>%
+  select(where(is.character)) %>%
+  names()
+
+df_modelo <- df_modelo %>%
+  mutate(across(all_of(categorical_cols), as.factor))
+```
+
+
+
+```{r}
+library(randomForest)
+
+modelo_random_forest <- randomForest(winning_attack ~ ., data = df_modelo, importance = TRUE)
+
+# Resumen del modelo
+print(modelo_random_forest)
+
+# Ver la importancia de las variables
+importance(modelo_random_forest)
+varImpPlot(modelo_random_forest)
+
+```
+
+
+
+
+
+GRADIENT BOOSTING
+
+```{r}
+# Convertir match_won a factor si es necesario
+df_modelo$match_won <- as.factor(df_modelo$match_won)
+df_modelo$sets_won <- as.factor(df_modelo$sets_won)
+df_modelo$reception_quality <- as.factor(df_modelo$reception_quality)
+df_modelo$skill_type <- as.factor(df_modelo$skill_type)
+df_modelo$num_players_numeric <- as.factor(df_modelo$num_players_numeric)
+df_modelo$home_setter_position <- as.factor(df_modelo$home_setter_position)
+df_modelo$visiting_setter_position <- as.factor(df_modelo$visiting_setter_position)
+df_modelo$attack_phase <- as.factor(df_modelo$attack_phase)
+
+```
+
+```{r}
+# Convertir los niveles "false" a 0 y "true" a 1
+df_modelo$winning_attack <- ifelse(df_modelo$winning_attack == "false", 0, 1)
+
+# Verificar que los niveles se hayan cambiado correctamente
+unique(df_modelo$winning_attack)
+```
+
+
+```{r}
+
+# Cargar la librería
+library(gbm)
+
+# Ajustar el modelo de Gradient Boosting
+modelo_gbm <- gbm(winning_attack ~ ., data = df_modelo, distribution = "bernoulli", n.trees = 1000, interaction.depth = 4, shrinkage = 0.01, bag.fraction = 0.5)
+
+# Realizar predicciones
+predicciones_gbm <- predict(modelo_gbm, newdata = df_modelo, n.trees = 1000, type = "response")
+
+# Calcular la precisión
+precision_gbm <- mean((predicciones_gbm > 0.5) == df_modelo$winning_attack)
+
+# Ver el rendimiento
+print(precision_gbm)
+
+```
+
+```{r}
+library(ROCR)
+
+
+pred_obj <- prediction(predicciones_gbm, df_modelo$winning_attack)
+
+auc <- performance(pred_obj, "auc")
+auc <- as.numeric(auc@y.values)
+
+print(auc)
+```
+
+
+
+```{r}
+# Cargar la librería
+library(e1071)
+
+# Ajustar el modelo SVM
+modelo_svm <- svm(winning_attack ~ ., data = df_modelo, kernel = "radial")
+
+# Realizar predicciones
+predicciones_svm <- predict(modelo_svm, newdata = df_modelo)
+
+# Calcular la precisión
+precision_svm <- mean(predicciones_svm == df_modelo$winning_attack)
+
+# Ver el rendimiento
+print(precision_svm)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+model <- glm(home_sets_won ~ home_team + visiting_team, 
+             family=poisson(link=log), data=df_aux)
+
+summary(model)
+```
+
+```{r}
+#Prediccion
+av_home_sets <- predict(model, 
+                      data.frame(home_team="cv guaguas", visiting_team="cv melilla"), 
+                      type="response")
+
+av_home_sets
+```
+
+
+```{r}
+model_2 <- glm(visiting_sets_won ~ home_team + visiting_team, 
+             family=poisson(link=log), data=df_aux)
+
+summary(model_2)
+```
+
+
+
+```{r}
+# let's make some predictions!
+av_visiting_sets <- predict(model_2, 
+                      data.frame(home_team="cv guaguas", visiting_team="cv melilla"), 
+                      type="response")
+
+av_visiting_sets
+```
+
+```{r}
+summary(df_aux$home_sets_won)
+summary(df_aux$visiting_sets_won)
+```
+
+
+
+```{r}
+# get probabilities per goal
+home_sets <- dpois(0:3, av_home_sets) 
+away_sets <- dpois(0:3, av_visiting_sets)
+
+home_sets
+away_sets
+
+# convert probability vectors into score matrix
+m <- home_sets %o% away_sets
+
+print(m)
+```
+
+```{r}
+away <- sum(m[upper.tri(m)])
+home <- sum(m[lower.tri(m)])
+
+print(home * 100)
+print(away * 100)
+```
+
+
+
+```{r}
+# Seleccionar variables predictoras y la variable objetivo
+variables_predictivas2 <- c("team","match_won", "sets_won","reception_quality", "skill_type", "num_players_numeric",
+                           "home_setter_position", "visiting_setter_position", "attack_phase","phase")
+variable_objetivo2 <- "winning_attack"
+
+```
+
+```{r}
+df_modelo2 <- df[df$skill == "attack" & df$phase == "reception" , c(variables_predictivas2, variable_objetivo2), drop = FALSE]
+# Eliminar filas con valores faltantes
+df_modelo2 <- na.omit(df_modelo2)
+```
+
+```{r}
+library(rpart)
+
+# Ajustar el modelo de árbol de decisión
+modelo_arbol2 <- rpart(winning_attack ~ ., data = df_modelo2, method = "class")
+
+# Mostrar el árbol de decisión
+printcp(modelo_arbol2)
+
+# Gráfico del árbol de decisión
+plot(modelo_arbol2)
+text(modelo_arbol2, use.n = TRUE)
+
+# Resumen del modelo
+summary(modelo_arbol2)
+```
+
+
+
+```{r}
+
+
+# Cargar las librerías necesarias
+library(tidyverse)
+library(corrplot)
+library(ggcorrplot)
+
+# Paso 1: Eliminar todas las filas con valores NA
+df_filtered <- df2 %>%
+  filter(!is.na(skill))
+
+# Paso 2: Eliminar las columnas que contienen IDs únicos
+exclude_cols <- c("match_id", "filename", "video_file_number", "point_id", "time","video_time","code",
+                  "special_code","date","Match", "start_coordinate", "mid_coordinate", "end_coordinate",
+                  "start_coordinate_x", "mid_coordinate_x", "end_coordinate_x",
+                  "start_coordinate_y", "mid_coordinate_y", "end_coordinate_y", "file_line_number",
+                  "attack_code","attack_description","set_code","set_description","set_type",
+                  "start_zone","end_zone","end_cone", "end_subzone","custom_code","set_player",
+                  "rally_id","possesion_id","timeout","substitution","point","end_of_set",
+                  "player_number","player_name","player_id","Player","setter_id","visiting_setter_id",
+                  "home_setter_id","visiting_player_id6","visiting_player_id5","visiting_player_id4",
+                  "visiting_player_id4","visiting_player_id3","visiting_player_id2","visiting_player_id1",
+                  "home_player_id6","home_player_id5","home_player_id4","home_player_id3","home_player_id2",
+                  "home_player_id1","point_phase", "team_touch_id", "evaluation_code", "evaluation", "home_team_score",
+                  "visiting_team_score","home_p1", "home_p2", "home_p3", "home_p4","home_p5","home_p6",
+                  "visiting_p1","visiting_p2","visiting_p3","visiting_p4","visiting_p5","visiting_p6",
+                  "home_score_start_of_point","visiting_score_start_of_point","attack_quality", "point_won_by")
+df_filtered <- df_filtered %>%
+  select(-all_of(exclude_cols))
+
+# Paso 3: Convertir columnas numéricas a tipo `numeric`
+# Identificar columnas que contienen solo números
+numeric_cols <- df_filtered %>%
+  select(where(is.character)) %>%
+  summarise(across(everything(), ~ all(grepl("^-?\\d*\\.?\\d+$", .)))) %>%
+  pivot_longer(everything(), names_to = "col", values_to = "is_numeric") %>%
+  filter(is_numeric) %>%
+  pull(col)
+
+# Convertir las columnas identificadas a numéricas
+df_filtered <- df_filtered %>%
+  mutate(across(all_of(numeric_cols), as.numeric))
+
+
+```
+
+```{r}
+categorical_cols <- df_filtered %>%
+  select(where(is.character)) %>%
+  names()
+
+df_filtered <- df_filtered %>%
+  mutate(across(all_of(categorical_cols), as.factor))
+```
+
+```{r}
+str(df_filtered)
+```
+
+```{r}
+
+numeric_df <- df_filtered %>%
+  select(where(is.numeric))
+
+# Calcular la matriz de correlación
+correlation_matrix <- cor(numeric_df, use = "complete.obs")
+
+# Visualizar la matriz de correlación con un heatmap
+corrplot(correlation_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         addCoef.col = "black", number.cex = 0.7,
+         col = colorRampPalette(c("red", "white", "blue"))(200))
+
+# Alternativa con ggcorrplot
+ggcorrplot(correlation_matrix, 
+           hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method = "circle", 
+           colors = c("red", "white", "blue"), 
+           title = "Correlation Heatmap", 
+           ggtheme = theme_minimal())
+```
+
+```{r}
+df_filtered <- df_filtered %>%
+  drop_na()
+```
+
+
+```{r}
+str(df_filtered)
+```
+
+
+```{r}
+# Entrenar un modelo de Random Forest para determinar la importancia de las variables
+set.seed(123)
+rf_model_importance <- randomForest(trainData_x, trainData_y, importance = TRUE)
+
+# Obtener la importancia de las variables
+importance <- importance(rf_model_importance)
+varImportance <- data.frame(Variables = row.names(importance), Importance = importance[,"MeanDecreaseGini"])
+
+# Ordenar por importancia
+varImportance <- varImportance %>% arrange(desc(Importance))
+
+# Mostrar las 10 variables más importantes
+print(varImportance[1:10,])
+
+# Eliminar las variables más importantes para ver el impacto en el rendimiento
+variables_to_remove <- varImportance$Variables[1:1]  # Por ejemplo, eliminar las 5 variables más importantes
+trainData_x_reduced <- trainData_x %>% select(-all_of(variables_to_remove))
+testData_x_reduced <- testData_x %>% select(-all_of(variables_to_remove))
+
+```
+
+```{r}
+# Entrenar nuevamente el modelo Random Forest con las variables reducidas
+set.seed(123)
+rf_model_reduced <- train(trainData_x_reduced, trainData_y, method = "rf", 
+                          trControl = trainControl(method = "cv", number = 10))
+
+# Predicción con el modelo reducido
+rf_pred_reduced <- predict(rf_model_reduced, testData_x_reduced)
+
+# Evaluación del modelo reducido
+rf_cm_reduced <- confusionMatrix(rf_pred_reduced, testData_y)
+print(rf_cm_reduced)
+```
+
+
+```{r}
+
+library(tidyverse)
+library(caret)
+library(gbm)
+library(e1071)
+library(randomForest)
+
+
+
+
+# Paso 2: Particionar los datos en conjunto de entrenamiento y prueba
+set.seed(123)
+trainIndex <- createDataPartition(df_filtered$winning_attack, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+trainData <- df_filtered[trainIndex,]
+testData  <- df_filtered[-trainIndex,]
+
+# Paso 3: Eliminar la variable predictora de los conjuntos de entrenamiento y prueba
+trainData_x <- trainData %>% select(-winning_attack)
+testData_x <- testData %>% select(-winning_attack)
+
+trainData_y <- trainData$winning_attack
+testData_y <- testData$winning_attack
+
+# Paso 4: Entrenar el modelo Random Forest
+set.seed(123)
+rf_model <- train(trainData_x, trainData_y, method = "rf", 
+                  trControl = trainControl(method = "cv", number = 10))
+
+# Paso 5: Predicción con el modelo de Random Forest
+rf_pred <- predict(rf_model, testData_x)
+
+# Paso 6: Evaluación del modelo Random Forest
+rf_cm <- confusionMatrix(rf_pred, testData_y)
+print(rf_cm)
+```
+
+
+```{r}
+importance(rf_model_importance)
+varImpPlot(rf_model_importance)
+
+```
