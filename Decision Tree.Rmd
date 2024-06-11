@@ -1,0 +1,48 @@
+---
+title: "Decision Tree"
+author: "Adrián González"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Eliminar las variables team_score, opp_score y crear dataframe con winnin_attack incluido
+trainData_arbol <- trainData_x_red
+trainData_arbol <- trainData_arbol %>%
+  select(-team_score, -opp_score)
+
+trainData_arbol <- cbind(trainData_arbol, winning_attack = trainData_y)
+```
+
+
+```{r}
+library(rpart)
+
+
+#trainData_arbol <- cbind(trainData_x_red, winning_attack = trainData_y)
+
+control <- trainControl(method = "cv", number = 10)
+
+# Entrenar el modelo
+set.seed(123)
+tree_model <- train(winning_attack ~ ., data = trainData_arbol, method = "rpart", trControl = control)
+```
+
+```{r}
+
+library(rpart.plot)
+# Predicciones con el conjunto de prueba
+tree_pred <- predict(tree_model, newdata = testData_x_red)
+
+# Matriz de confusión
+tree_cm <- confusionMatrix(tree_pred, testData_y)
+print(tree_cm)
+
+# Ver gráfico del árbol de decisión
+rpart.plot(tree_model$finalModel)
+```
+
