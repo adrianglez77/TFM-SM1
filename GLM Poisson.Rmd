@@ -1,0 +1,242 @@
+---
+title: "GLM Poisson"
+author: "Adrián González"
+date: "2024-06-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+POISSON Y GLM PARA CALCULAR LOS SETS DE LOCAL Y VISITANTE
+
+```{r}
+df_aux <- df[, c("home_team", "visiting_team", "home_sets_won", "visiting_sets_won", "match_won_by", "match_id")]
+df_aux <- df_aux[!duplicated(df_aux$match_id), ]
+```
+
+
+```{r}
+# Calcular los puntos de ataque para el equipo local
+home_attack_points <- df %>%
+  filter(skill == "attack") %>%
+  group_by(match_id) %>%
+  summarize(home_attack_points = sum(ifelse(team == home_team, evaluation_code == "#", 0)))
+
+# Calcular los puntos de ataque para el equipo visitante
+visiting_attack_points <- df %>%
+  filter(skill == "attack") %>%
+  group_by(match_id) %>%
+  summarize(visiting_attack_points = sum(ifelse(team == visiting_team, evaluation_code == "#", 0)))
+
+# Calcular los puntos de saque para el equipo local
+home_serve_points <- df %>%
+  filter(skill == "serve") %>%
+  group_by(match_id) %>%
+  summarize(home_serve_points = sum(ifelse(team == home_team, evaluation_code == "#", 0)))
+
+# Calcular los puntos de saque para el equipo visitante
+visiting_serve_points <- df %>%
+  filter(skill == "serve") %>%
+  group_by(match_id) %>%
+  summarize(visiting_serve_points = sum(ifelse(team == visiting_team, evaluation_code == "#", 0)))
+
+# Calcular los puntos de bloqueo para el equipo local
+home_block_points <- df %>%
+  filter(skill == "block") %>%
+  group_by(match_id) %>%
+  summarize(home_block_points = sum(ifelse(team == home_team, evaluation_code == "#", 0)))
+
+# Calcular los puntos de bloqueo para el equipo visitante
+visiting_block_points <- df %>%
+  filter(skill == "block") %>%
+  group_by(match_id) %>%
+  summarize(visiting_block_points = sum(ifelse(team == visiting_team, evaluation_code == "#", 0)))
+
+# Unir los resultados con df_aux
+df_aux <- df_aux %>%
+  left_join(home_attack_points, by = "match_id") %>%
+  left_join(visiting_attack_points, by = "match_id") %>%
+  left_join(home_serve_points, by = "match_id") %>%
+  left_join(visiting_serve_points, by = "match_id") %>%
+  left_join(home_block_points, by = "match_id") %>%
+  left_join(visiting_block_points, by = "match_id")
+
+head(df_aux)
+
+
+```
+
+
+```{r}
+# Convertir variables categóricas en factores si es necesario
+df_aux$home_team <- as.factor(df_aux$home_team)
+df_aux$visiting_team <- as.factor(df_aux$visiting_team)
+df_aux$match_won_by <- as.factor(df_aux$match_won_by)
+df_aux$match_id <- as.factor(df_aux$match_id)
+```
+
+
+```{r}
+library(gplots)  # Cargamos la librería necesaria para la función heatmap
+
+# Matriz de correlación
+correlation_matrix <- cor(df_aux[, c("home_sets_won", "visiting_sets_won", "home_attack_points",
+                                     "visiting_attack_points", "home_serve_points",
+                                     "visiting_serve_points", "home_block_points", "visiting_block_points")])
+
+# Convertimos la matriz en un dataframe
+correlation_df <- as.data.frame(as.table(correlation_matrix))
+names(correlation_df) <- c("Variable1", "Variable2", "Correlation")
+
+heatmap_plot <- ggplot(correlation_df, aes(Variable1, Variable2, fill = Correlation, label = round(Correlation, 2))) +
+  geom_tile(color = "white") +
+  geom_text(color = "black", size = 3) +  # Añadimos etiquetas de texto con el valor de la correlación
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limit = c(-1, 1), space = "Lab", name="Correlation") +
+  theme_minimal() +
+  labs(title = "Análisis de correlación entre variables",
+       x = "Variables",
+       y = "Variables") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(heatmap_plot)
+```
+
+
+
+
+
+```{r}
+# Preparar los datos
+df_home <- df_aux %>%
+  select(team = home_team, sets_won = home_sets_won, sets_lost = visiting_sets_won)
+
+df_visiting <- df_aux %>%
+  select(team = visiting_team, sets_won = visiting_sets_won, sets_lost = home_sets_won)
+
+df_combined <- bind_rows(df_home, df_visiting) %>%
+  group_by(team) %>%
+  summarise(
+    total_sets_won = sum(sets_won),
+    total_sets_lost = sum(sets_lost)
+  )
+```
+
+
+```{r}
+library(tidyr)
+library(ggplot2)
+
+df_long <- df_combined %>%
+  gather(key = "sets_type", value = "count", -team)
+
+ggplot(df_long, aes(x = team, y = count, fill = sets_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("total_sets_won" = "chartreuse3", "total_sets_lost" = "coral2")) +
+  labs(title = "Sets ganados y perdidos por Equipo",
+       x = "Equipo",
+       y = "Número de sets",
+       fill = "Sets ganados/perdidos") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# Calcular los sets ganados por los equipos locales y visitantes
+sets_ganados <- df_aux %>%
+  summarise(
+    sets_ganados_local = sum(home_sets_won),
+    sets_ganados_visitante = sum(visiting_sets_won)
+  )
+
+sets_ganados_long <- sets_ganados %>%
+  gather(key = "tipo", value = "sets_ganados")
+
+ggplot(sets_ganados_long, aes(x = tipo, y = sets_ganados, fill = tipo)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("sets_ganados_local" = "blue", "sets_ganados_visitante" = "orange")) +
+  labs(title = "Sets Ganados por Equipos Locales y Visitantes",
+       x = "Tipo de Equipo",
+       y = "Número de Sets Ganados",
+       fill = "Tipo de Equipo") +
+  theme_minimal()
+
+```
+
+
+```{r}
+
+# Calcular las medias de sets ganados por equipos locales y visitantes
+sets_media <- df_aux %>%
+  summarize(
+    media_sets_locales = mean(home_sets_won),
+    media_sets_visitantes = mean(visiting_sets_won)
+  )
+
+sets_media_long <- sets_media %>%
+  gather(key = "tipo", value = "media_sets", media_sets_locales, media_sets_visitantes)
+
+ggplot(sets_media_long, aes(x = tipo, y = media_sets, fill = tipo)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("media_sets_locales" = "cadetblue4", "media_sets_visitantes" = "cornsilk3"), 
+                    labels = c("Local", "Visitante")) +
+  labs(title = "Media de sets ganados por equipos locales y visitantes",
+       x = "Equipo",
+       y = "Media de Sets Ganados",
+       fill = "Equipo") +
+  theme_minimal()
+
+
+```
+
+
+```{r}
+# Numericas
+df_aux$home_sets_won <- as.numeric(as.character(df_aux$home_sets_won))
+df_aux$visiting_sets_won <- as.numeric(as.character(df_aux$visiting_sets_won))
+
+df_aux <- df_aux %>%
+  mutate(sets_total = home_sets_won + visiting_sets_won)
+```
+
+
+```{r}
+# Crear el modelo GLM Poisson para el equipo local
+glm_model_home <- glm(home_sets_won ~ home_team + visiting_team + home_attack_points 
+                      + home_serve_points + home_block_points, 
+                      family = poisson(link = "log"), data = df_aux)
+
+# Crear el modelo GLM Poisson para el equipo visitante
+glm_model_visiting <- glm(visiting_sets_won ~ home_team + visiting_team + visiting_attack_points
+                          + visiting_serve_points + visiting_block_points, 
+                          family = poisson(link = "log"), data = df_aux)
+
+# Resumen del modelo
+summary(glm_model_home)
+summary(glm_model_visiting)
+```
+
+
+```{r}
+# Creamos los datos para hacer la prediccion
+new_data <- data.frame(
+  home_team = c("cisneros alter", "unicaja costa de almería", "grupo herce soria"),
+  visiting_team = c("pamesa teruel voleibol", "cv guaguas", "club vóley palma"),
+  home_attack_points = c(40, 45, 50),
+  home_serve_points = c(5, 8, 6),
+  home_block_points = c(2, 7, 5),
+  visiting_attack_points = c(60, 50, 55),
+  visiting_serve_points = c(6, 9, 7),
+  visiting_block_points = c(5, 10, 6)
+)
+
+# Predicción para home_sets_won
+predicted_home_sets_won <- predict(glm_model_home, newdata = new_data, type = "response")
+
+# Predicción para visiting_sets_won
+predicted_visiting_sets_won <- predict(glm_model_visiting, newdata = new_data, type = "response")
+
+predicted_home_sets_won
+predicted_visiting_sets_won
+```
