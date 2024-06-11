@@ -1,0 +1,86 @@
+---
+title: "SVM"
+author: "Adrián González"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Duplicamos las variables para no modificar e interferir en las otras tecnicas
+trainData_x_red2 <- trainData_x_red
+testData_x_red2 <- testData_x_red
+trainData_svm <- cbind(trainData_x_red2, winning_attack = trainData_y)
+testData_svm <- cbind(testData_x_red2, winning_attack = testData_y)
+```
+
+```{r}
+
+# Convertir las variables categóricas a numéricas
+trainData_svm_numeric <- trainData_svm %>%
+  mutate_if(is.factor, as.numeric)
+
+testData_svm_numeric <- testData_svm %>%
+  mutate_if(is.factor, as.numeric)
+```
+
+
+```{r}
+library(e1071)
+library(caret)
+
+svm_model <- svm(winning_attack ~ ., data = trainData_svm_numeric)
+
+```
+
+```{r}
+# Convertir la variable winning_attack a factor en trainData_svm_numeric
+trainData_svm_numeric$winning_attack <- factor(trainData_svm_numeric$winning_attack)
+
+# Convertir la variable winning_attack a factor en testData_svm_numeric
+testData_svm_numeric$winning_attack <- factor(testData_svm_numeric$winning_attack)
+```
+
+```{r}
+# Convertir la variable winning_attack a factor en testData_svm_numeric
+testData_svm_numeric$winning_attack <- factor(testData_svm_numeric$winning_attack, levels = levels(trainData_svm_numeric$winning_attack))
+
+```
+
+
+```{r}
+
+# Predicciones
+predictions <- predict(svm_model, testData_svm_numeric)
+
+# Matriz de confusión
+conf_matrix <- confusionMatrix(predictions, testData_svm_numeric$winning_attack)
+print(conf_matrix)
+
+```
+
+
+
+```{r}
+library(caret)
+
+# Calcular otras métricas de evaluación
+accuracy <- conf_matrix$overall["Accuracy"]
+sensitivity <- conf_matrix$byClass["Sensitivity"]
+specificity <- conf_matrix$byClass["Specificity"]
+
+print(paste("Sensitivity:", round(sensitivity, 4)))
+print(paste("Specificity:", round(specificity, 4)))
+
+# Otras metricas: recall y F1-score
+recall <- conf_matrix$byClass["Recall"]
+f1_score <- conf_matrix$byClass["F1"]
+
+cat("Accuracy:", accuracy, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-score:", f1_score, "\n")
+
+```
